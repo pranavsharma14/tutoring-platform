@@ -1,7 +1,6 @@
 "use client"
 
 import type React from "react"
-
 import { useState } from "react"
 import { useAuth } from "@/lib/auth-context"
 import { useRouter, useSearchParams } from "next/navigation"
@@ -21,7 +20,6 @@ export default function SignupPage() {
   const router = useRouter()
   const searchParams = useSearchParams()
 
-  // Check if role is specified in URL
   const urlRole = searchParams.get("role") as "parent" | "teacher" | null
   if (urlRole && role !== urlRole) {
     setRole(urlRole)
@@ -34,7 +32,8 @@ export default function SignupPage() {
 
     try {
       await signup(email, password, name, role)
-      router.push(role === "parent" ? "/parent/dashboard" : "/teacher/dashboard")
+      alert("Signup successful! Please login with your new credentials.")
+      router.push("/login") // ✅ go to login instead of dashboard
     } catch (err) {
       setError(err instanceof Error ? err.message : "Signup failed")
     } finally {
