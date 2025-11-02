@@ -1,50 +1,138 @@
+// backend/server.js
 import express from "express";
 import mongoose from "mongoose";
 import dotenv from "dotenv";
 import cors from "cors";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
-import { verifyToken } from "./middleware/auth.js"; // 👈 existing middleware import
-import Request from "./models/Request.js"; // 👈 new model import
 
 dotenv.config();
+
+const { MONGO_URI, JWT_SECRET, PORT = 5000 } = process.env;
+
+if (!MONGO_URI || !JWT_SECRET) {
+  console.error("❌ Missing MONGO_URI or JWT_SECRET in .env");
+  process.exit(1);
+}
+
 const app = express();
 app.use(express.json());
 app.use(cors());
 
-// MongoDB Connect
+// ===== DATABASE CONNECTION =====
 mongoose
-  .connect(process.env.MONGO_URI)
+  .connect(MONGO_URI)
   .then(() => console.log("✅ MongoDB Connected"))
-  .catch((err) => console.error("❌ MongoDB Error:", err.message));
+  .catch((err) => {
+    console.error("❌ MongoDB Error:", err.message);
+    process.exit(1);
+  });
 
-// Schema
-const userSchema = new mongoose.Schema({
-  name: String,
-  email: { type: String, unique: true },
-  password: String,
-  role: { type: String, enum: ["parent", "teacher"] },
-});
-
+// ===== MODELS =====
+const userSchema = new mongoose.Schema(
+  {
+    name: String,
+    email: { type: String, unique: true, required: true },
+    password: String,
+    role: { type: String, enum: ["parent", "teacher"], required: true },
+    avatar: String,
+  },
+  { timestamps: true }
+);
 const User = mongoose.model("User", userSchema);
 
-// 🔹 Signup
-app.post("/api/signup", async (req, res) => {
-  const { name, email, password, role } = req.body;
+const teacherSchema = new mongoose.Schema(
+  {
+    name: String,
+    email: { type: String, unique: true },
+    bio: { type: String, default: "" },
+    subjects: { type: [String], default: [] },
+    qualifications: { type: [String], default: [] },
+    hourlyRate: { type: Number, default: 0 },
+    experience: { type: Number, default: 0 },
+    location: { type: String, default: "" },
+    image: String,
+    rating: { type: Number, default: 0 },
+    reviewCount: { type: Number, default: 0 },
+    verified: { type: Boolean, default: false },
+  },
+  { timestamps: true }
+);
+const Teacher = mongoose.model("Teacher", teacherSchema);
+
+const reviewSchema = new mongoose.Schema(
+  {
+    teacherId: { type: mongoose.Schema.Types.ObjectId, ref: "Teacher", required: true },
+    parentId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
+    rating: { type: Number, required: true, min: 1, max: 5 },
+    comment: { type: String, required: true },
+  },
+  { timestamps: true }
+);
+const Review = mongoose.model("Review", reviewSchema);
+
+// ===== HELPERS =====
+function makeUserSafe(userDoc) {
+  if (!userDoc) return null;
+  const u = userDoc.toObject ? userDoc.toObject() : userDoc;
+  return {
+    id: u._id?.toString ? u._id.toString() : u._id,
+    name: u.name,
+    email: u.email,
+    role: u.role,
+    avatar: u.avatar || null,
+  };
+}
+
+// ===== MIDDLEWARE =====
+function verifyToken(req, res, next) {
+  const authHeader = req.headers.authorization || "";
+  const token = authHeader.split(" ")[1];
+  if (!token) return res.status(401).json({ error: "No token" });
+
   try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    req.user = decoded;
+    next();
+  } catch {
+    res.status(401).json({ error: "Invalid token" });
+  }
+}
+
+// ===== AUTH ROUTES =====
+app.post("/api/signup", async (req, res) => {
+  try {
+    const { name, email, password, role } = req.body;
+    if (!name || !email || !password || !role) {
+      return res.status(400).json({ error: "Missing required fields" });
+    }
+
+    const existing = await User.findOne({ email });
+    if (existing) return res.status(400).json({ error: "User already exists" });
+
     const hashed = await bcrypt.hash(password, 10);
-    const user = new User({ name, email, password: hashed, role });
-    await user.save();
-    res.json({ message: "Signup successful" });
+    const user = await User.create({ name, email, password: hashed, role });
+
+    if (role === "teacher") {
+      await Teacher.create({ name, email });
+    }
+
+    const token = jwt.sign(
+      { id: user._id, email: user.email, role: user.role },
+      JWT_SECRET,
+      { expiresIn: "7d" }
+    );
+
+    res.status(201).json({ token, user: makeUserSafe(user) });
   } catch (err) {
-    res.status(400).json({ error: err.message });
+    console.error("Signup error:", err);
+    res.status(500).json({ error: err.message });
   }
 });
 
-// 🔹 Login
 app.post("/api/login", async (req, res) => {
-  const { email, password, role } = req.body;
   try {
+    const { email, password, role } = req.body;
     const user = await User.findOne({ email, role });
     if (!user) return res.status(400).json({ error: "Invalid credentials" });
 
@@ -53,109 +141,55 @@ app.post("/api/login", async (req, res) => {
 
     const token = jwt.sign(
       { id: user._id, email: user.email, role: user.role },
-      process.env.JWT_SECRET,
+      JWT_SECRET,
       { expiresIn: "7d" }
     );
 
-    res.json({ token, user });
+    res.json({ token, user: makeUserSafe(user) });
   } catch (err) {
-    res.status(400).json({ error: err.message });
+    res.status(500).json({ error: err.message });
   }
 });
 
-// 🔹 Profile check
-app.get("/api/me", (req, res) => {
-  const auth = req.headers.authorization;
-  if (!auth) return res.status(401).json({ error: "No token" });
-  const token = auth.split(" ")[1];
+// ===== TEACHER ROUTES =====
+
+// ✅ List all teachers (for search page)
+app.get("/api/teachers", async (req, res) => {
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    res.json(decoded);
-  } catch {
-    res.status(401).json({ error: "Invalid token" });
-  }
-});
-
-
-// ==============================
-// 🔹 Request System Starts Here 🔹
-// ==============================
-
-// 🔹 Send Request (Parent → Teacher)
-app.post("/api/requests", verifyToken, async (req, res) => {
-  try {
-    const { teacherId, message } = req.body;
-    if (req.user.role !== "parent")
-      return res.status(403).json({ error: "Only parents can send requests" });
-
-    const newReq = await Request.create({
-      parentId: req.user.id,
-      teacherId,
-      message,
-    });
-
-    res.json({ message: "Request sent successfully", request: newReq });
+    const teachers = await Teacher.find().lean();
+    res.json(teachers);
   } catch (err) {
-    res.status(400).json({ error: err.message });
+    console.error("Error fetching teachers:", err);
+    res.status(500).json({ error: "Server error" });
   }
 });
 
-// 🔹 Get Requests (Teacher → Dashboard)
-app.get("/api/requests", verifyToken, async (req, res) => {
+// ✅ Public single teacher (for View Profile)
+app.get("/api/public/teacher/:id", async (req, res) => {
   try {
-    if (req.user.role !== "teacher")
-      return res.status(403).json({ error: "Only teachers can view requests" });
+    const t = await Teacher.findById(req.params.id).lean();
+    if (!t) return res.status(404).json({ error: "Teacher not found" });
+    t.id = t._id;
+    t.subjects = t.subjects || [];
+    t.qualifications = t.qualifications || [];
+    res.json(t);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
-    const requests = await Request.find({ teacherId: req.user.id })
+// ===== REVIEWS =====
+app.get("/api/reviews/:teacherId", async (req, res) => {
+  try {
+    const reviews = await Review.find({ teacherId: req.params.teacherId })
       .populate("parentId", "name email")
-      .sort({ createdAt: -1 });
-
-    res.json(requests);
-  } catch (err) {
-    res.status(400).json({ error: err.message });
+      .sort({ createdAt: -1 })
+      .lean();
+    res.json(reviews);
+  } catch {
+    res.status(500).json({ error: "Error fetching reviews" });
   }
 });
 
-// 🔹 Accept Request
-app.put("/api/requests/:id/accept", verifyToken, async (req, res) => {
-  try {
-    if (req.user.role !== "teacher")
-      return res.status(403).json({ error: "Only teachers can update requests" });
-
-    const updated = await Request.findOneAndUpdate(
-      { _id: req.params.id, teacherId: req.user.id },
-      { status: "accepted" },
-      { new: true }
-    );
-
-    res.json(updated);
-  } catch (err) {
-    res.status(400).json({ error: err.message });
-  }
-});
-
-// 🔹 Reject Request
-app.put("/api/requests/:id/reject", verifyToken, async (req, res) => {
-  try {
-    if (req.user.role !== "teacher")
-      return res.status(403).json({ error: "Only teachers can update requests" });
-
-    const updated = await Request.findOneAndUpdate(
-      { _id: req.params.id, teacherId: req.user.id },
-      { status: "rejected" },
-      { new: true }
-    );
-
-    res.json(updated);
-  } catch (err) {
-    res.status(400).json({ error: err.message });
-  }
-});
-
-
-// ==============================
-// 🔹 Server Start
-// ==============================
-app.listen(process.env.PORT, () =>
-  console.log(`🚀 Server running on port ${process.env.PORT}`)
-);
+// ===== START SERVER =====
+app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));

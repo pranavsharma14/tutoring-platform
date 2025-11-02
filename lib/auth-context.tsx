@@ -24,13 +24,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
+  const API_URL = "http://localhost:5000/api";
+
   useEffect(() => {
     const saved = localStorage.getItem("tutor_user");
     if (saved) setUser(JSON.parse(saved));
     setIsLoading(false);
   }, []);
-
-  const API_URL = "http://localhost:5000/api";
 
   const login = async (email: string, password: string, role: "parent" | "teacher") => {
     setIsLoading(true);
@@ -41,8 +41,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         body: JSON.stringify({ email, password, role }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
-      const newUser = { ...data.user, token: data.token };
+      if (!res.ok) throw new Error(data.error || "Login failed");
+
+      // Ensure consistent user shape
+      const newUser = {
+        id: data.user._id || data.user.id,
+        name: data.user.name,
+        email: data.user.email,
+        role: data.user.role,
+        token: data.token,
+      };
+
       localStorage.setItem("tutor_user", JSON.stringify(newUser));
       setUser(newUser);
     } finally {
@@ -59,7 +68,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         body: JSON.stringify({ email, password, name, role }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
+      if (!res.ok) throw new Error(data.error || data.message);
+
+      // Standardize new user
+      const newUser = {
+        id: data.user._id || data.user.id,
+        name: data.user.name,
+        email: data.user.email,
+        role: data.user.role,
+        token: data.token,
+      };
+
+      localStorage.setItem("tutor_user", JSON.stringify(newUser));
+      setUser(newUser);
     } finally {
       setIsLoading(false);
     }
@@ -82,3 +103,5 @@ export function useAuth() {
   if (!ctx) throw new Error("useAuth must be used within AuthProvider");
   return ctx;
 }
+
+

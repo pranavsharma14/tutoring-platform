@@ -7,8 +7,21 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import Link from "next/link"
-import { mockTeachers } from "@/lib/mock-data"
-import type { Teacher } from "@/lib/types"
+
+type Teacher = {
+  _id: string
+  name: string
+  bio: string
+  subjects: string[]
+  qualifications: string[]
+  hourlyRate: number
+  experience: number
+  location: string
+  image?: string
+  verified?: boolean
+  rating?: number
+  reviewCount?: number
+}
 
 export default function SearchTutorsPage() {
   const { user } = useAuth()
@@ -16,45 +29,55 @@ export default function SearchTutorsPage() {
   const [searchTerm, setSearchTerm] = useState("")
   const [selectedSubject, setSelectedSubject] = useState("")
   const [maxRate, setMaxRate] = useState(100)
-  const [filteredTeachers, setFilteredTeachers] = useState<Teacher[]>(mockTeachers)
+  const [teachers, setTeachers] = useState<Teacher[]>([])
+  const [filteredTeachers, setFilteredTeachers] = useState<Teacher[]>([])
 
   useEffect(() => {
     if (!user || user.role !== "parent") {
       router.push("/login")
+      return
     }
+
+    fetch("http://localhost:5000/api/teachers")
+      .then((res) => res.json())
+      .then((data) => {
+        setTeachers(data)
+        setFilteredTeachers(data)
+      })
+      .catch(() => console.error("Error fetching teachers"))
   }, [user, router])
 
   useEffect(() => {
-    let filtered = mockTeachers
+    let filtered = teachers
 
     if (searchTerm) {
       filtered = filtered.filter(
         (t) =>
           t.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-          t.bio.toLowerCase().includes(searchTerm.toLowerCase()),
+          t.bio.toLowerCase().includes(searchTerm.toLowerCase())
       )
     }
 
     if (selectedSubject) {
-      filtered = filtered.filter((t) => t.subjects.some((s) => s.toLowerCase().includes(selectedSubject.toLowerCase())))
+      filtered = filtered.filter((t) =>
+        t.subjects.some((s) => s.toLowerCase().includes(selectedSubject.toLowerCase()))
+      )
     }
 
     filtered = filtered.filter((t) => t.hourlyRate <= maxRate)
 
     setFilteredTeachers(filtered)
-  }, [searchTerm, selectedSubject, maxRate])
+  }, [searchTerm, selectedSubject, maxRate, teachers])
 
-  if (!user || user.role !== "parent") {
-    return null
-  }
+  if (!user || user.role !== "parent") return null
 
-  const allSubjects = Array.from(new Set(mockTeachers.flatMap((t) => t.subjects)))
+  const allSubjects = Array.from(new Set(teachers.flatMap((t) => t.subjects)))
 
   return (
     <div className="min-h-screen bg-background">
-      {/* Navigation */}
+      {/* Navbar */}
       <nav className="border-b border-border bg-card">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex justify-between items-center">
+        <div className="max-w-7xl mx-auto px-6 py-4 flex justify-between items-center">
           <Link href="/parent/dashboard" className="text-2xl font-bold text-primary">
             TutorHub
           </Link>
@@ -74,7 +97,7 @@ export default function SearchTutorsPage() {
         </div>
       </nav>
 
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <main className="max-w-7xl mx-auto px-6 py-8">
         <div className="grid md:grid-cols-4 gap-8">
           {/* Filters */}
           <div className="md:col-span-1">
@@ -83,7 +106,7 @@ export default function SearchTutorsPage() {
                 <CardTitle className="text-lg">Filters</CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="space-y-2">
+                <div>
                   <label className="text-sm font-medium">Search</label>
                   <Input
                     placeholder="Name or subject..."
@@ -92,12 +115,12 @@ export default function SearchTutorsPage() {
                   />
                 </div>
 
-                <div className="space-y-2">
+                <div>
                   <label className="text-sm font-medium">Subject</label>
                   <select
                     value={selectedSubject}
                     onChange={(e) => setSelectedSubject(e.target.value)}
-                    className="w-full px-3 py-2 border border-border rounded-md text-sm"
+                    className="w-full px-3 py-2 border rounded-md text-sm"
                   >
                     <option value="">All Subjects</option>
                     {allSubjects.map((subject) => (
@@ -108,7 +131,7 @@ export default function SearchTutorsPage() {
                   </select>
                 </div>
 
-                <div className="space-y-2">
+                <div>
                   <label className="text-sm font-medium">Max Hourly Rate: ${maxRate}</label>
                   <input
                     type="range"
@@ -125,16 +148,14 @@ export default function SearchTutorsPage() {
 
           {/* Tutors Grid */}
           <div className="md:col-span-3">
-            <div className="mb-4">
-              <h2 className="text-2xl font-bold">Available Tutors</h2>
-              <p className="text-muted-foreground">
-                {filteredTeachers.length} tutor{filteredTeachers.length !== 1 ? "s" : ""} found
-              </p>
-            </div>
+            <h2 className="text-2xl font-bold mb-2">Available Tutors</h2>
+            <p className="text-muted-foreground mb-4">
+              {filteredTeachers.length} tutor{filteredTeachers.length !== 1 ? "s" : ""} found
+            </p>
 
             <div className="grid gap-4">
               {filteredTeachers.map((teacher) => (
-                <Card key={teacher.id} className="hover:shadow-lg transition-shadow">
+                <Card key={teacher._id} className="hover:shadow-lg transition-shadow">
                   <CardContent className="pt-6">
                     <div className="flex gap-4">
                       <img
@@ -148,13 +169,10 @@ export default function SearchTutorsPage() {
                             <h3 className="text-lg font-semibold">{teacher.name}</h3>
                             <div className="flex items-center gap-2 mt-1">
                               <span className="text-yellow-500">★</span>
-                              <span className="text-sm font-medium">{teacher.rating}</span>
-                              <span className="text-sm text-muted-foreground">({teacher.reviewCount} reviews)</span>
-                              {teacher.verified && (
-                                <span className="text-xs bg-green-100 text-green-800 px-2 py-1 rounded">
-                                  ✓ Verified
-                                </span>
-                              )}
+                              <span className="text-sm font-medium">{teacher.rating || 0}</span>
+                              <span className="text-sm text-muted-foreground">
+                                ({teacher.reviewCount || 0} reviews)
+                              </span>
                             </div>
                           </div>
                           <div className="text-right">
@@ -174,21 +192,11 @@ export default function SearchTutorsPage() {
                               {subject}
                             </span>
                           ))}
-                          {teacher.subjects.length > 3 && (
-                            <span className="text-xs text-muted-foreground px-2 py-1">
-                              +{teacher.subjects.length - 3} more
-                            </span>
-                          )}
                         </div>
 
                         <div className="flex gap-2">
-                          <Link href={`/parent/tutor/${teacher.id}`}>
+                          <Link href={`/parent/tutor/${teacher._id}`}>
                             <Button size="sm">View Profile</Button>
-                          </Link>
-                          <Link href={`/parent/request/${teacher.id}`}>
-                            <Button size="sm" variant="outline">
-                              Send Request
-                            </Button>
                           </Link>
                         </div>
                       </div>
@@ -199,8 +207,8 @@ export default function SearchTutorsPage() {
 
               {filteredTeachers.length === 0 && (
                 <Card>
-                  <CardContent className="pt-6 text-center">
-                    <p className="text-muted-foreground">No tutors found matching your criteria.</p>
+                  <CardContent className="pt-6 text-center text-muted-foreground">
+                    No tutors found matching your criteria.
                   </CardContent>
                 </Card>
               )}
