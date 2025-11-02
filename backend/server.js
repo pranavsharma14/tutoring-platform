@@ -1,10 +1,10 @@
-// backend/server.js
 import express from "express";
 import mongoose from "mongoose";
 import dotenv from "dotenv";
 import cors from "cors";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
+import requestRoutes from "./routes/requestRoutes.js";
 
 dotenv.config();
 
@@ -43,6 +43,7 @@ const User = mongoose.model("User", userSchema);
 
 const teacherSchema = new mongoose.Schema(
   {
+    userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
     name: String,
     email: { type: String, unique: true },
     bio: { type: String, default: "" },
@@ -60,6 +61,7 @@ const teacherSchema = new mongoose.Schema(
 );
 const Teacher = mongoose.model("Teacher", teacherSchema);
 
+
 const reviewSchema = new mongoose.Schema(
   {
     teacherId: { type: mongoose.Schema.Types.ObjectId, ref: "Teacher", required: true },
@@ -71,41 +73,12 @@ const reviewSchema = new mongoose.Schema(
 );
 const Review = mongoose.model("Review", reviewSchema);
 
-// ===== HELPERS =====
-function makeUserSafe(userDoc) {
-  if (!userDoc) return null;
-  const u = userDoc.toObject ? userDoc.toObject() : userDoc;
-  return {
-    id: u._id?.toString ? u._id.toString() : u._id,
-    name: u.name,
-    email: u.email,
-    role: u.role,
-    avatar: u.avatar || null,
-  };
-}
-
-// ===== MIDDLEWARE =====
-function verifyToken(req, res, next) {
-  const authHeader = req.headers.authorization || "";
-  const token = authHeader.split(" ")[1];
-  if (!token) return res.status(401).json({ error: "No token" });
-
-  try {
-    const decoded = jwt.verify(token, JWT_SECRET);
-    req.user = decoded;
-    next();
-  } catch {
-    res.status(401).json({ error: "Invalid token" });
-  }
-}
-
 // ===== AUTH ROUTES =====
 app.post("/api/signup", async (req, res) => {
   try {
     const { name, email, password, role } = req.body;
-    if (!name || !email || !password || !role) {
+    if (!name || !email || !password || !role)
       return res.status(400).json({ error: "Missing required fields" });
-    }
 
     const existing = await User.findOne({ email });
     if (existing) return res.status(400).json({ error: "User already exists" });
@@ -113,19 +86,14 @@ app.post("/api/signup", async (req, res) => {
     const hashed = await bcrypt.hash(password, 10);
     const user = await User.create({ name, email, password: hashed, role });
 
-    if (role === "teacher") {
-      await Teacher.create({ name, email });
-    }
+    if (role === "teacher") await Teacher.create({ name, email });
 
-    const token = jwt.sign(
-      { id: user._id, email: user.email, role: user.role },
-      JWT_SECRET,
-      { expiresIn: "7d" }
-    );
+    const token = jwt.sign({ id: user._id, email: user.email, role: user.role }, JWT_SECRET, {
+      expiresIn: "7d",
+    });
 
-    res.status(201).json({ token, user: makeUserSafe(user) });
+    res.status(201).json({ token, user: { id: user._id, name, email, role } });
   } catch (err) {
-    console.error("Signup error:", err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -139,39 +107,30 @@ app.post("/api/login", async (req, res) => {
     const valid = await bcrypt.compare(password, user.password);
     if (!valid) return res.status(400).json({ error: "Invalid credentials" });
 
-    const token = jwt.sign(
-      { id: user._id, email: user.email, role: user.role },
-      JWT_SECRET,
-      { expiresIn: "7d" }
-    );
+    const token = jwt.sign({ id: user._id, email: user.email, role: user.role }, JWT_SECRET, {
+      expiresIn: "7d",
+    });
 
-    res.json({ token, user: makeUserSafe(user) });
+    res.json({ token, user: { id: user._id, name: user.name, email, role } });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
 // ===== TEACHER ROUTES =====
-
-// ✅ List all teachers (for search page)
 app.get("/api/teachers", async (req, res) => {
   try {
     const teachers = await Teacher.find().lean();
     res.json(teachers);
   } catch (err) {
-    console.error("Error fetching teachers:", err);
     res.status(500).json({ error: "Server error" });
   }
 });
 
-// ✅ Public single teacher (for View Profile)
 app.get("/api/public/teacher/:id", async (req, res) => {
   try {
     const t = await Teacher.findById(req.params.id).lean();
     if (!t) return res.status(404).json({ error: "Teacher not found" });
-    t.id = t._id;
-    t.subjects = t.subjects || [];
-    t.qualifications = t.qualifications || [];
     res.json(t);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -190,6 +149,9 @@ app.get("/api/reviews/:teacherId", async (req, res) => {
     res.status(500).json({ error: "Error fetching reviews" });
   }
 });
+
+// ===== REQUEST ROUTES =====
+app.use("/api/requests", requestRoutes);
 
 // ===== START SERVER =====
 app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));

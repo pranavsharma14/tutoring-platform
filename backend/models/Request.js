@@ -4,7 +4,7 @@ const requestSchema = new mongoose.Schema(
   {
     parentId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
     teacherId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
-    message: { type: String },
+    message: { type: String, default: "" },
     status: {
       type: String,
       enum: ["pending", "accepted", "rejected"],
